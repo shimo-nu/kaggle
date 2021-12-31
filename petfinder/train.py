@@ -87,7 +87,7 @@ def ArgParser():
 
     return args
 
-def train(n_epochs, optimizer, model, loss_fn, train_data, valid_data, batch_size, data_width, file_path):
+def train(n_epochs, optimizer, model, loss_fn, alpha, train_data, valid_data, batch_size, data_width, file_path):
 
     train_loss_list = []
     val_loss_list = []
@@ -106,6 +106,10 @@ def train(n_epochs, optimizer, model, loss_fn, train_data, valid_data, batch_siz
             optimizer.zero_grad()
             outputs = model(imgs)
             loss = loss_fn(outputs, labels)
+            l2 = torch.tensor(0., requires_grad=True)
+            for w in model.parameters():
+                l2 = l2 + torch.norm(w)**2
+            loss = loss + alpha*l2
             loss.backward()
             optimizer.step()
             train_loss_sum += loss.item()
@@ -199,19 +203,20 @@ def main():
     
     print("Formatting Data")
     pet_dataloader = PetData(img_list, train_csv)
-    train_data, valid_data = train_test_split(pet_dataloader, test_size=0.1)
+    train_data, valid_data = train_test_split(pet_dataloader, test_size=0.2)
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=32, shuffle=True)
     valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=32, shuffle=True) 
 
 
     model = NeuralNet(in_size=input_size).to(device=device)
     lr = 1e-2
-    optimizer = optim.Adam(model.parameters(), lr, weight_decay=0.01)
+    alpha = 0.01
+    optimizer = optim.Adam(model.parameters(), lr)
     loss_fn = nn.MSELoss()
     print(model)
     print("Learning Rate : {}".format(lr))
     print("Start Train")
-    trained_model = train(200, optimizer, model, loss_fn, train_dataloader, valid_dataloader, 16, input_size, model_path)
+    trained_model = train(200, optimizer, model, loss_fn, alpha, train_dataloader, valid_dataloader, 16, input_size, model_path)
     
     torch.save(model.state_dict(), model_path + '/model.pth')
 
