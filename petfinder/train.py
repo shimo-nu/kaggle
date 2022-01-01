@@ -17,11 +17,22 @@ from torchvision.datasets.utils import download_url
 import math
 import datetime
 import argparse
+import json
 from sklearn.model_selection import train_test_split
 from torch import optim
 from torchvision import models
+from logging import getLogger, config
+from torchinfo import summary
 
-device='cuda:0'
+from efficientnet_pytorch import EfficientNet
+
+with open('../log_config.json', 'r') as f:
+    log_conf = json.load(f)
+
+
+
+
+device='cuda:1'
 
 class PetData(torch.utils.data.Dataset):
     def __init__(self, data, train_csv):
@@ -52,6 +63,8 @@ class NeuralNet(nn.Module):
         self.dropout1 = torch.nn.Dropout2d(p=0.3)
         self.dropout2 = torch.nn.Dropout(p=0.3)
         self.resnet50 = models.resnet50(pretrained=True)
+        self.effb7 = EfficientNet.from_pretrained('efficientnet-b2')
+        self.effb7._fc = nn.Linear(self.effb7._fc.in_features, 1)
         self.resnet50.fc = self.fc2
 
     def size(self, hin, win, dilation, padding, kernel_size, stride):
@@ -70,7 +83,7 @@ class NeuralNet(nn.Module):
         # out = self.dropout1(out)
         # out = out.reshape(out.shape[0], -1)
         # # out = out.view(out.shape[0], -1)/
-        out = self.resnet50(x)
+        out = self.effb7(x)
         # out = torch.relu(self.fc1(out))
         # out = self.dropout2(out)
         # out = torch.relu(self.fc2(out))
@@ -87,7 +100,7 @@ def ArgParser():
 
     return args
 
-def train(n_epochs, optimizer, model, loss_fn, alpha, train_data, valid_data, batch_size, data_width, file_path):
+def train(n_epochs, optimizer, model, loss_fn, alpha, train_data, valid_data, batch_size, data_width, logger, file_path):
 
     train_loss_list = []
     val_loss_list = []
@@ -137,7 +150,7 @@ def train(n_epochs, optimizer, model, loss_fn, alpha, train_data, valid_data, ba
         train_loss_list.append(train_loss)
         val_loss_list.append(val_loss)
 
-        print('{} Epoch : {:>4}, Train Loss : {:.8f}, Val Loss : {:.8f}'.format(datetime.datetime.now(), epoch, train_loss, val_loss))
+        logger.info('{} Epoch : {:>4}, Train Loss : {:.8f}, Val Loss : {:.8f}'.format(datetime.datetime.now(), epoch, train_loss, val_loss))
 
     x = np.arange(1, n_epochs + 1)
     plt.plot(x, train_loss_list)
@@ -182,9 +195,15 @@ def main():
     dirname=input("Input Directory Name For Result : ")
     model_path = './model/' + dirname
     os.makedirs(model_path)
+
+    log_conf["handlers"]["fileHandler"]["filename"] = model_path + '/sys.log'
+    config.dictConfig(log_conf)
+    logger = getLogger(__name__)
+
     shutil.copyfile('./train.py',model_path + '/train_copy.py')
     discription = input("Description : ")
 
+    logger.info(discription)
 
     print("Load Data")
     train_csv = pd.read_csv('./data/train.csv')
@@ -195,17 +214,18 @@ def main():
     img_list = {}
     mode = 'train'
     size = [1280, 1280]
-    input_size = [224, 224]
+    input_size = [240, 240]
     print("Load Image Data")
     for img_name in train_csv['Id']:
         img = cv2.imread('./data/' + mode + '/' + img_name +'.jpg')
         img_list[img_name] = cv2.resize(Resize(img, size) , (int(input_size[0]), int(input_size[1])))
     
     print("Formatting Data")
+    batch_size = 32
     pet_dataloader = PetData(img_list, train_csv)
     train_data, valid_data = train_test_split(pet_dataloader, test_size=0.2)
-    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=32, shuffle=True)
-    valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=32, shuffle=True) 
+    train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size, shuffle=True) 
 
 
     model = NeuralNet(in_size=input_size).to(device=device)
@@ -215,8 +235,9 @@ def main():
     loss_fn = nn.MSELoss()
     print(model)
     print("Learning Rate : {}".format(lr))
+    # logger.info(summary(model, input_size=(batch_size, 3, input_size[0], input_size[1]), col_names=["output_size", "num_params"]))
     print("Start Train")
-    trained_model = train(200, optimizer, model, loss_fn, alpha, train_dataloader, valid_dataloader, 16, input_size, model_path)
+    trained_model = train(200, optimizer, model, loss_fn, alpha, train_dataloader, valid_dataloader, 16, input_size, logger, model_path)
     
     torch.save(model.state_dict(), model_path + '/model.pth')
 
